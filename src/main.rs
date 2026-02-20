@@ -1,50 +1,91 @@
 #![no_std]
 #![no_main]
 
-use arduino_hal::simple_pwm::{IntoPwmPin, Prescaler, Timer2Pwm};
+use arduino_hal::{
+    adc::Channel,
+    hal::port::PH6,
+    port::{mode::PwmOutput, Pin},
+    simple_pwm::{IntoPwmPin, Prescaler, Timer2Pwm},
+    Adc, Peripherals,
+};
+use aule::prelude::*;
 use panic_halt as _;
 
 #[arduino_hal::entry]
 fn main() -> ! {
     let dp = arduino_hal::Peripherals::take().unwrap();
+
+    closed_loop(dp, 1.0, 0.0, 0.0);
+}
+
+fn closed_loop(dp: Peripherals, kp: f64, ki: f64, kd: f64) -> ! {
     let pins = arduino_hal::pins!(dp);
 
-    /*
-     * For examples (and inspiration), head to
-     *
-     *     https://github.com/Rahix/avr-hal/tree/main/examples
-     *
-     * NOTE: Not all examples were ported to all boards!  There is a good chance though, that code
-     * for a different board can be adapted for yours.  The Arduino Uno currently has the most
-     * examples available.
-     */
-
-    let timer2 = Timer2Pwm::new(dp.TC2, Prescaler::Prescale64);
-    let mut led = pins.d9.into_output().into_pwm(&timer2);
-    
     let mut adc = arduino_hal::Adc::new(dp.ADC, Default::default());
     let a0 = pins.a0.into_analog_input(&mut adc).into_channel();
+    let mut sensor = Sensor::new(adc, a0);
 
-    let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
+    let timer2 = Timer2Pwm::new(dp.TC2, Prescaler::Prescale64);
+    let pwm_output = pins.d9.into_output().into_pwm(&timer2);
+    let mut actuator = Actuator::new(pwm_output);
 
-    let mut fade_amount = 5i32;
-    let mut brightness = 0;
+    let mut reference = Step::new(5.0);
+    let mut pid = PID::new(kp, ki, kd);
 
-    loop {
-        brightness += fade_amount;
+    for time in EndlessTime::new(0.03) {
+        let sensor_signal = time * sensor.as_block();
+        let ref_signal = time * reference.as_block();
+        let error = ref_signal - sensor_signal;
 
-        if brightness == 0 || brightness == 255 {
-            // Reverse the direction of the fading at the ends of the fade:
-            fade_amount = -fade_amount;
-        }
+        let output = error * pid.as_block();
+        let _ = output * actuator.as_block();
 
-        led.set_duty(brightness as u8);
-        led.enable();
+        arduino_hal::delay_ms(time.delta.dt().as_millis() as u32);
+    }
 
-        let v = adc.read_blocking(&a0);
+    unreachable!();
+}
 
-        let _ = ufmt::uwrite!(&mut serial, "{} {}\n", v, brightness);
+pub struct Sensor {
+    adc: Adc,
+    channel: Channel,
+}
 
-        arduino_hal::delay_ms(30);
+impl Sensor {
+    pub fn new(adc: Adc, channel: Channel) -> Self {
+        Self { adc, channel }
+    }
+}
+
+impl Block for Sensor {
+    type Input = ();
+    type Output = f64;
+
+    fn output(&mut self, input: Signal<Self::Input>) -> Signal<Self::Output> {
+        input.map(|_| self.adc.read_blocking(&self.channel) as f64)
+    }
+}
+
+pub struct Actuator {
+    pwm: Pin<PwmOutput<Timer2Pwm>, PH6>,
+}
+
+impl Actuator {
+    pub fn new(pwm: Pin<PwmOutput<Timer2Pwm>, PH6>) -> Self {
+        Self { pwm }
+    }
+}
+
+impl Block for Actuator {
+    type Input = f64;
+    type Output = ();
+
+    fn output(&mut self, input: Signal<Self::Input>) -> Signal<Self::Output> {
+        let duty = input.value.clamp(0.0, 255.0) as u8;
+
+        self.pwm.set_duty(duty);
+        self.pwm.enable();
+
+        input.map(|_| ())
     }
 }
