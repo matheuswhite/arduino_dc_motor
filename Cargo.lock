@@ -73,6 +73,7 @@ dependencies = [
 [[package]]
 name = "aule"
 version = "0.1.0"
+source = "git+https://github.com/matheuswhite/aule-rs.git#632228733f429f95b5802af110d28b85e90a19d2"
 dependencies = [
  "libm",
  "num-traits",
