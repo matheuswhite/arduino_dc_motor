@@ -51,18 +51,18 @@ fn closed_loop(dp: Peripherals, kp: f64, ki: f64, kd: f64) -> ! {
     let reference_offset = 3.0;
     // Constroi um objeto PID, para servir como o nosso controlador.
     let mut controller = PID::new(kp, ki, kd);
-    // Constroi um objeto EndlessTime, para servir como o motor de execução. Essa variável vai gerar o tempo de execução, que será usado pelos nossos objetos.
-    let execution_engine = EndlessTime::new(0.03);
+    // Constroi um objeto EndlessSimulation, para servir como o motor de execução. Essa variável vai gerar o tempo de execução, que será usado pelos nossos objetos.
+    let execution_engine = EndlessSimulation::new(0.03);
 
     // Configura a Serial do Arduino, para conseguirmos enviar dados via print
     let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
 
     // Loop de execução. Note que o motor de execução vai gerar a variável `time`, que contém o tempo de amostragem e o tempo total da simulação.
-    for time in execution_engine {
+    for sim_state in execution_engine {
         // Constroi o sinal vindo do sensor. Esse sinal contém a tensão lida pelo sensor, além dos parametros de tempo contidos no time.
-        let sensor_signal = time * sensor.as_block();
+        let sensor_signal = sim_state * sensor.as_block();
         // Constroi o sinal de referencia.
-        let ref_signal = time * reference.as_block() + reference_offset;
+        let ref_signal = sim_state * reference.as_block() + reference_offset;
         // Calcula o erro, sendo a referencia menos o sinal lido do sensor.
         let error = ref_signal - sensor_signal;
 
@@ -79,7 +79,7 @@ fn closed_loop(dp: Peripherals, kp: f64, ki: f64, kd: f64) -> ! {
         let _ = uwrite!(&mut serial, "\n");
 
         // Espera o tempo de amostragem descrito dentro da variável `time`
-        arduino_hal::delay_ms(time.delta.dt().as_millis() as u32);
+        arduino_hal::delay_ms(sim_state.dt().as_millis() as u32);
     }
 
     // Macro para indicar que esse ponto nunca vai ser atingido, pois o for não vai encerrar, pois o tipo é EndlessTime. Ou seja, a execução executa sem fim (endless).
@@ -135,14 +135,11 @@ impl Block for Sensor {
     type Output = f64;
 
     // Calcula a saída do Sensor, a cada entrada.
-    fn output(&mut self, input: Signal<Self::Input>) -> Signal<Self::Output> {
+    fn block(&mut self, _input: Self::Input, _sim_state: SimulationState) -> Self::Output {
         // Lê o valor do ADC, como um inteiro sem sinal de 10-bits.
         let adc_value = self.adc.read_blocking(&self.channel);
-        // Converte o valor do ADC em uma tensão.
-        let voltage = (adc_value as f64 / Self::ADC_MAX_VALUE) * Self::MAX_SENSOR_VOLTAGE;
-
-        // Converte o tipo de entrada de vazio em float de 64-bits. Além disso, coloca o valor de `voltage` no sinal.
-        input.map(|_| voltage)
+        // Converte o valor do ADC em uma tensão e o retorna.
+        (adc_value as f64 / Self::ADC_MAX_VALUE) * Self::MAX_SENSOR_VOLTAGE
     }
 }
 
@@ -171,9 +168,9 @@ impl Block for Actuator {
     type Output = ();
 
     // Recebe a tensão como entrada e envia via PWM.
-    fn output(&mut self, input: Signal<Self::Input>) -> Signal<Self::Output> {
+    fn block(&mut self, input: Self::Input, _sim_state: SimulationState) -> Self::Output {
         // Limita a tensão de entrada entre 0V até 12V.
-        let input_value = input.value.clamp(0.0, Actuator::MAX_ACTUATOR_VOLTAGE);
+        let input_value = input.clamp(0.0, Actuator::MAX_ACTUATOR_VOLTAGE);
         // Converte o valor de tensão em ciclo de trabalho do PWM. Os limites de valores do PWM é de 0 até 255 (100%).
         let duty = ((input_value * 255.0) / Actuator::MAX_ACTUATOR_VOLTAGE).clamp(0.0, 255.0) as u8;
 
@@ -181,8 +178,5 @@ impl Block for Actuator {
         self.pwm.set_duty(duty);
         // Habilita o PWM
         self.pwm.enable();
-
-        // Converte o tipo de entrada de float de 64-bits em tipo vazio.
-        input.map(|_| ())
     }
 }
