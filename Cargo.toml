@@ -13,9 +13,11 @@ bench = false
 [dependencies]
 panic-halt = "1.0.0"
 ufmt = "0.2.0"
+ufmt_float = "0.2.0"
 nb = "1.1.0"
 embedded-hal = "1.0"
-aule = { git = "https://github.com/matheuswhite/aule-rs.git", default-features = false }
+# aule = { git = "https://github.com/matheuswhite/aule-rs.git", default-features = false }
+aule = { path = "../aule-rs", default-features = false }
 
 [dependencies.arduino-hal]
 git = "https://github.com/rahix/avr-hal"

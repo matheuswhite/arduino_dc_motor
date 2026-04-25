@@ -3,6 +3,8 @@
 // Indica para o Rust que não usaremos a main tradicional
 #![no_main]
 
+mod format;
+
 // Imports do HAL do Arduino, da lib Aule, do core do Rust, panic_hal e ufmt.
 use arduino_hal::{
     adc::Channel,
@@ -13,9 +15,10 @@ use arduino_hal::{
     Adc, Peripherals,
 };
 use aule::prelude::*;
-use core::time::Duration;
+use core::{ops::Add, time::Duration};
 use panic_halt as _;
-use ufmt::uwrite;
+use ufmt::{uwrite, uwriteln, uWrite};
+use crate::format::write_fixed_f32;
 
 // Indica o ponto de entrada do firmware (ou a função main).
 #[arduino_hal::entry]
@@ -24,10 +27,10 @@ fn main() -> ! {
     let dp = arduino_hal::Peripherals::take().unwrap();
 
     // Execução do PID e malha fechada, passando os valores de Kp, Ki e Kd.
-    closed_loop(dp, 1.0, 0.0, 0.0);
+    closed_loop(dp, 2.0, 0.0, 0.0);
 }
 
-fn closed_loop(dp: Peripherals, kp: f64, ki: f64, kd: f64) -> ! {
+fn closed_loop(dp: Peripherals, kp: f32, ki: f32, kd: f32) -> ! {
     // Obtendo os pinos do Arduino, por exemplo: a0, d9, etc.
     let pins = arduino_hal::pins!(dp);
 
@@ -46,16 +49,17 @@ fn closed_loop(dp: Peripherals, kp: f64, ki: f64, kd: f64) -> ! {
     let mut actuator = Actuator::new(pwm_output);
 
     // Constroi um objeto Sinusoid, para servir como um sinal de referencia senoidal, com amplitude 2V, com frequencia de 0.5Hz e fase 0.
-    let mut reference = Sinusoid::new(2.0, Duration::from_secs_f32(0.5), 0.0);
+    // let mut reference = Sinusoid::new(1.0_f32, Duration::from_secs_f32(0.5), 0.0);
+    let mut reference = Step::new(1.0);
     // Offset DC da referencia. Desta forma, agora a senoide de referencia varia entre 1V e 5V.
-    let reference_offset = 3.0;
+    let reference_offset = 0.0;
     // Constroi um objeto PID, para servir como o nosso controlador.
     let mut controller = PID::new(kp, ki, kd);
     // Constroi um objeto EndlessSimulation, para servir como o motor de execução. Essa variável vai gerar o tempo de execução, que será usado pelos nossos objetos.
     let execution_engine = EndlessSimulation::new(0.03);
 
     // Configura a Serial do Arduino, para conseguirmos enviar dados via print
-    let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
+    let mut serial = arduino_hal::default_serial!(dp, pins, 115200);
 
     // Loop de execução. Note que o motor de execução vai gerar a variável `time`, que contém o tempo de amostragem e o tempo total da simulação.
     for sim_state in execution_engine {
@@ -71,29 +75,28 @@ fn closed_loop(dp: Peripherals, kp: f64, ki: f64, kd: f64) -> ! {
         // Envia o sinal de controle para atuador.
         let _ = output * actuator.as_block();
 
+        print_float(&mut serial, sim_state.sim_time().as_secs_f32());
+        let _ = uwrite!(&mut serial, ",");
         // Imprime na serial o valor da referencia.
         print_float(&mut serial, ref_signal.value);
+        let _ = uwrite!(&mut serial, ",");
         // Imprime na serial o valor do sinal lido pelo sensor.
         print_float(&mut serial, sensor_signal.value);
         // Imprime um `\n` para o monitor do arduino entender cada um dos valores anteriores como um ponto de uma curva que será apresentado no gráfico. Desta forma, teremos 2 pontos, um para cada curva.
         let _ = uwrite!(&mut serial, "\n");
 
         // Espera o tempo de amostragem descrito dentro da variável `time`
-        arduino_hal::delay_ms(sim_state.dt().as_millis() as u32);
+        arduino_hal::delay_us(sim_state.dt().as_micros() as u32);
     }
 
     // Macro para indicar que esse ponto nunca vai ser atingido, pois o for não vai encerrar, pois o tipo é EndlessTime. Ou seja, a execução executa sem fim (endless).
     unreachable!();
 }
 
+
 // Função para imprimir números em ponto flutuante.
-fn print_float(serial: &mut Usart0<MHz16>, value: f64) {
-    // Obtem a parte inteira, convertendo o float para int.
-    let integer_part = value as i32;
-    // Obtém a parte fracionária, removendo a parte inteira e multiplicando por 1000. Após isso, convertemos para int. Desta forma, teremos a precisão de 3 casas decimais.
-    let fract_part = ((integer_part as f64 - value) * 1000.0) as i32;
-    // Imprime a parte inteira e a parte fracionária na serial do Arduino.
-    let _ = uwrite!(serial, "{}.{}", integer_part, fract_part);
+fn print_float(serial: &mut Usart0<MHz16>, value: f32) {
+    let _ = write_fixed_f32(serial, value, 3);
 }
 
 // Define a estrutura Sensor, para facilitar a leitura do ADC e embutir a conversão do valor do ADC em tensão.
@@ -105,21 +108,21 @@ pub struct Sensor {
 }
 
 // Função executada em tempo de compilação para calcular um dividor de tensão.
-const fn voltage_divider(vin: f64, r1: f64, r2: f64) -> f64 {
+const fn voltage_divider(vin: f32, r1: f32, r2: f32) -> f32 {
     (r2 / (r1 + r2)) * vin
 }
 
 // Função executada em tempo de compilação para calcular o valor máximo de um ADC, dada uma resolução em bits.
-const fn adc_max_value(resolution_bits: u32) -> f64 {
-    2i32.pow(resolution_bits) as f64
+const fn adc_max_value(resolution_bits: u32) -> f32 {
+    2i32.pow(resolution_bits) as f32
 }
 
 // Métodos da estrutura Sensor.
 impl Sensor {
     // Indica a tensão máxima que pode ser lida pelo ADC.
-    const MAX_SENSOR_VOLTAGE: f64 = voltage_divider(12.0, 10_000.0, 5_000.0);
+    const MAX_SENSOR_VOLTAGE: f32 = voltage_divider(12.0, 10_000.0, 5_000.0);
     // Indica o valor máximo do ADC de 10-bits de resolução.
-    const ADC_MAX_VALUE: f64 = adc_max_value(10);
+    const ADC_MAX_VALUE: f32 = adc_max_value(10);
 
     // Constroi um novo objeto do tipo Sensor. É necessário passar o periférico do ADC e qual canal (ou pino analogico) será utilizado.
     pub fn new(adc: Adc, channel: Channel) -> Self {
@@ -132,14 +135,14 @@ impl Block for Sensor {
     // Define que a entrada será o tipo vazio, pois o sensor não recebe nada como entrada.
     type Input = ();
     // Define que a saída será um float de 64-bits, pois o sensor envia uma tensão como saída.
-    type Output = f64;
+    type Output = f32;
 
     // Calcula a saída do Sensor, a cada entrada.
     fn block(&mut self, _input: Self::Input, _sim_state: SimulationState) -> Self::Output {
         // Lê o valor do ADC, como um inteiro sem sinal de 10-bits.
         let adc_value = self.adc.read_blocking(&self.channel);
         // Converte o valor do ADC em uma tensão e o retorna.
-        (adc_value as f64 / Self::ADC_MAX_VALUE) * Self::MAX_SENSOR_VOLTAGE
+        (adc_value as f32 / Self::ADC_MAX_VALUE) * Self::MAX_SENSOR_VOLTAGE
     }
 }
 
@@ -152,7 +155,7 @@ pub struct Actuator {
 // Métodos da estrutura Actuator.
 impl Actuator {
     // Indica a tensão máxima que o atuador pode enviar. Esse valor é correspondente a 255 do PWM (ou 100% do PWM).
-    const MAX_ACTUATOR_VOLTAGE: f64 = 12.0;
+    const MAX_ACTUATOR_VOLTAGE: f32 = 12.0;
 
     // Constroi um novo objeto do tipo Actuator. É necessário passar o periférico do PWM.
     pub fn new(pwm: Pin<PwmOutput<Timer2Pwm>, PH6>) -> Self {
@@ -163,7 +166,7 @@ impl Actuator {
 // Implementa o trait Block da lib Aule para a estrutura Actuator.
 impl Block for Actuator {
     // Define que a entrada será um float de 64-bits, pois o atuador precisa de um valor de tensão para ser convertido em porcentagem PWM e enviado.
-    type Input = f64;
+    type Input = f32;
     // Define que a saída será o tipo vazio, pois o atuador não retorna nada de saída.
     type Output = ();
 

@@ -40,6 +40,7 @@ dependencies = [
  "nb 1.1.0",
  "panic-halt",
  "ufmt",
+ "ufmt_float",
 ]
 
 [[package]]
@@ -73,7 +74,6 @@ dependencies = [
 [[package]]
 name = "aule"
 version = "0.1.0"
-source = "git+https://github.com/matheuswhite/aule-rs.git#626751c0f3a995a92cd614dbf86214b5929b9588"
 dependencies = [
  "libm",
  "num-traits",
@@ -443,6 +443,12 @@ name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
+
+[[package]]
+name = "micromath"
+version = "2.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3c8dda44ff03a2f238717214da50f65d5a53b45cd213a7370424ffdb6fae815"
 
 [[package]]
 name = "nb"
@@ -878,6 +884,16 @@ name = "ufmt-write"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e87a2ed6b42ec5e28cc3b94c09982969e9227600b2e3dcbc1db927a84c06bd69"
+
+[[package]]
+name = "ufmt_float"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7181bd69b8da1f7822e3b9ab86e89c1c9bd42a6558407c81821ed18738d097b4"
+dependencies = [
+ "micromath",
+ "ufmt",
+]
 
 [[package]]
 name = "unicode-ident"
